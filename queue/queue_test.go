@@ -1,13 +1,15 @@
 package queue
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestCreate(t *testing.T) {
 	queue := Create()
 
-	if queue.Size() != 0 {
-		t.Fatalf("Queue actual size is %d, but should be %d", queue.Size(), 3)
-	}
+	assert.Equal(t, 0, queue.Size())
 }
 
 func TestEnqueu(t *testing.T) {
@@ -15,9 +17,7 @@ func TestEnqueu(t *testing.T) {
 	queue := Queue{}
 	queue.Enqueue(item)
 
-	if queue.Size() != 1 {
-		t.Fatal("Failed to enqueue item")
-	}
+	assert.Equal(t, 1, queue.Size())
 }
 
 func TestDequeue(t *testing.T) {
@@ -27,13 +27,8 @@ func TestDequeue(t *testing.T) {
 	queue.Enqueue(3)
 	receivedItem := queue.Dequeue()
 
-	if receivedItem != 1 {
-		t.Fatalf("Wrong item is requeued. expected: %d, received: %d", 1, receivedItem)
-	}
-
-	if queue.Size() != 2 {
-		t.Fatal("Item still in the queue")
-	}
+	assert.Equal(t, 1, receivedItem)
+	assert.Equal(t, 2, queue.Size())
 }
 
 func TestSize(t *testing.T) {
@@ -42,16 +37,12 @@ func TestSize(t *testing.T) {
 	queue.Enqueue(2)
 	queue.Enqueue(3)
 
-	if queue.Size() != 3 {
-		t.Fatalf("Queue actual size is %d, but should be %d", queue.Size(), 3)
-	}
+	assert.Equal(t, 3, queue.Size())
 }
 
 func TestDequeueEmpty(t *testing.T) {
 	queue := Queue{}
 	receivedItem := queue.Dequeue()
 
-	if receivedItem != nil {
-		t.Fatalf("Wrong item is returned. expected: nil, received: %d", receivedItem)
-	}
+	assert.Nil(t, receivedItem, queue.Size())
 }

@@ -2,6 +2,8 @@ package pool
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCreate(t *testing.T) {
@@ -9,6 +11,8 @@ func TestCreate(t *testing.T) {
 }
 
 func TestSimpleAcquire(t *testing.T) {
+	assert := assert.New(t)
+
 	pool := Create(PoolConfig{
 		max: 1,
 		create: func() any {
@@ -18,13 +22,8 @@ func TestSimpleAcquire(t *testing.T) {
 
 	item, err := pool.Acquire()
 
-	if item.Get() != 1 {
-		t.Fatalf("Expected item %d, received %d", 1, item)
-	}
-
-	if err != nil {
-		t.Fatal("Acquire should not return an error and a resource")
-	}
+	assert.Equal(1, item.Get())
+	assert.Nil(err)
 }
 
 func TestExceddMaximumResources(t *testing.T) {
@@ -37,16 +36,12 @@ func TestExceddMaximumResources(t *testing.T) {
 
 	_, err := pool.Acquire()
 
-	if err == nil {
-		t.Fatal("Acquire should fail because reached the maximum number of allowed resources")
-	}
+	assert.NotNil(t, err)
 }
 
 func TestSimpleRelease(t *testing.T) {
 	defer func() {
-		if r := recover(); r != nil {
-			t.Fatal("Should not fail")
-		}
+		assert.Nil(t, recover())
 	}()
 
 	pool := Create(PoolConfig{
@@ -62,9 +57,7 @@ func TestSimpleRelease(t *testing.T) {
 
 func TestRelaseUnknownResource(t *testing.T) {
 	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("Should fail")
-		}
+		assert.NotNil(t, recover())
 	}()
 
 	pool := Create(PoolConfig{
@@ -81,6 +74,8 @@ func TestRelaseUnknownResource(t *testing.T) {
 }
 
 func TestMultipleResources(t *testing.T) {
+	assert := assert.New(t)
+
 	counter := 0
 	pool := Create(PoolConfig{
 		max: 2,
@@ -98,24 +93,15 @@ func TestMultipleResources(t *testing.T) {
 
 	resource3, _ := pool.Acquire()
 
-	if 1 != resource1.Get() {
-		t.Fatalf("1. resource expected to be %d, received %d", 1, resource1.Get())
-	}
-
-	if 2 != resource2.Get() {
-		t.Fatalf("2. resource expected to be %d, received %d", 2, resource2.Get())
-	}
-
-	if 1 != resource3.Get() {
-		t.Fatalf("3. resource expected to be %d, received %d", 1, resource3.Get())
-	}
-
-	if resource1.id != resource3.id {
-		t.Fatalf("3. resource expected to have id %d, received %d", resource1.id, resource3.id)
-	}
+	assert.Equal(1, resource1.Get())
+	assert.Equal(2, resource2.Get())
+	assert.Equal(1, resource3.Get())
+	assert.Equal(resource1.id, resource3.id)
 }
 
 func TestPoolSize(t *testing.T) {
+	assert := assert.New(t)
+
 	counter := 0
 	pool := Create(PoolConfig{
 		max: 2,
@@ -129,45 +115,21 @@ func TestPoolSize(t *testing.T) {
 	resource1, _ := pool.Acquire()
 	resource2, _ := pool.Acquire()
 
-	if pool.Size() != 2 {
-		t.Fatalf("Pool size expected to be %d, received %d", 2, pool.Size())
-	}
-
-	if pool.NumberOfIdleResources() != 0 {
-		t.Fatalf("Number of idle resources expected to be %d, received %d", 0, pool.NumberOfIdleResources())
-	}
-
-	if pool.NumberOfLendedResources() != 2 {
-		t.Fatalf("Number of lended resources expected to be %d, received %d", 2, pool.NumberOfLendedResources())
-	}
+	assert.Equal(2, pool.Size())
+	assert.Equal(0, pool.NumberOfIdleResources())
+	assert.Equal(2, pool.NumberOfLendedResources())
 
 	pool.Release(resource1)
 
-	if pool.Size() != 2 {
-		t.Fatalf("Pool size expected to be %d, received %d", 2, pool.Size())
-	}
-
-	if pool.NumberOfIdleResources() != 1 {
-		t.Fatalf("Number of idle resources expected to be %d, received %d", 1, pool.NumberOfIdleResources())
-	}
-
-	if pool.NumberOfLendedResources() != 1 {
-		t.Fatalf("Number of lended resources expected to be %d, received %d", 1, pool.NumberOfLendedResources())
-	}
+	assert.Equal(2, pool.Size())
+	assert.Equal(1, pool.NumberOfIdleResources())
+	assert.Equal(1, pool.NumberOfLendedResources())
 
 	pool.Release(resource2)
 
-	if pool.Size() != 2 {
-		t.Fatalf("Pool size expected to be %d, received %d", 2, pool.Size())
-	}
-
-	if pool.NumberOfIdleResources() != 2 {
-		t.Fatalf("Number of idle resources expected to be %d, received %d", 2, pool.NumberOfIdleResources())
-	}
-
-	if pool.NumberOfLendedResources() != 0 {
-		t.Fatalf("Number of lended resources expected to be %d, received %d", 0, pool.NumberOfLendedResources())
-	}
+	assert.Equal(2, pool.Size())
+	assert.Equal(2, pool.NumberOfIdleResources())
+	assert.Equal(0, pool.NumberOfLendedResources())
 }
 
 func TestDestroy(t *testing.T) {
@@ -190,16 +152,12 @@ func TestDestroy(t *testing.T) {
 	pool.Release(resource)
 	pool.Destroy()
 
-	if !isDestroyed {
-		t.Fatal("Should have destroyed the resources")
-	}
+	assert.True(t, isDestroyed)
 }
 
 func TestDestroyWhileThereAreLendedResource(t *testing.T) {
 	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("Should fail")
-		}
+		assert.NotNil(t, recover())
 	}()
 
 	counter := 0
