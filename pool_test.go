@@ -2,11 +2,25 @@ package pool
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestCreate(t *testing.T) {
+	Create(PoolConfig{
+		factory: PoolFactory{
+			create: func() any {
+				return 1
+			},
+		},
+	})
+}
+
+func TestCreateWithoutFactoryCreateMethod(t *testing.T) {
+	defer func() {
+		assert.NotNil(t, recover())
+	}()
 	Create(PoolConfig{})
 }
 
@@ -15,8 +29,10 @@ func TestSimpleAcquire(t *testing.T) {
 
 	pool := Create(PoolConfig{
 		max: 1,
-		create: func() any {
-			return 1
+		factory: PoolFactory{
+			create: func() any {
+				return 1
+			},
 		},
 	})
 
@@ -29,8 +45,10 @@ func TestSimpleAcquire(t *testing.T) {
 func TestExceddMaximumResources(t *testing.T) {
 	pool := Create(PoolConfig{
 		max: 0,
-		create: func() any {
-			return 1
+		factory: PoolFactory{
+			create: func() any {
+				return 1
+			},
 		},
 	})
 
@@ -46,8 +64,10 @@ func TestSimpleRelease(t *testing.T) {
 
 	pool := Create(PoolConfig{
 		max: 1,
-		create: func() any {
-			return 1
+		factory: PoolFactory{
+			create: func() any {
+				return 1
+			},
 		},
 	})
 
@@ -62,14 +82,16 @@ func TestRelaseUnknownResource(t *testing.T) {
 
 	pool := Create(PoolConfig{
 		max: 1,
-		create: func() any {
-			return 1
+		factory: PoolFactory{
+			create: func() any {
+				return 1
+			},
 		},
 	})
 
 	pool.Acquire()
 	pool.Release(Resource{
-		id: 10,
+		id: "10",
 	})
 }
 
@@ -79,10 +101,13 @@ func TestMultipleResources(t *testing.T) {
 	counter := 0
 	pool := Create(PoolConfig{
 		max: 2,
-		create: func() any {
-			counter++
 
-			return counter
+		factory: PoolFactory{
+			create: func() any {
+				counter++
+
+				return counter
+			},
 		},
 	})
 
@@ -105,10 +130,12 @@ func TestPoolSize(t *testing.T) {
 	counter := 0
 	pool := Create(PoolConfig{
 		max: 2,
-		create: func() any {
-			counter++
+		factory: PoolFactory{
+			create: func() any {
+				counter++
 
-			return counter
+				return counter
+			},
 		},
 	})
 
@@ -130,6 +157,12 @@ func TestPoolSize(t *testing.T) {
 	assert.Equal(2, pool.Size())
 	assert.Equal(2, pool.NumberOfIdleResources())
 	assert.Equal(0, pool.NumberOfLendedResources())
+
+	pool.Acquire()
+
+	assert.Equal(2, pool.Size())
+	assert.Equal(1, pool.NumberOfIdleResources())
+	assert.Equal(1, pool.NumberOfLendedResources())
 }
 
 func TestDestroy(t *testing.T) {
@@ -138,19 +171,21 @@ func TestDestroy(t *testing.T) {
 
 	pool := Create(PoolConfig{
 		max: 2,
-		create: func() any {
-			counter++
+		factory: PoolFactory{
+			create: func() any {
+				counter++
 
-			return counter
-		},
-		destroy: func(resource Resource) {
-			isDestroyed = true
+				return counter
+			},
+			destroy: func(resource Resource) {
+				isDestroyed = true
+			},
 		},
 	})
 
 	resource, _ := pool.Acquire()
 	pool.Release(resource)
-	pool.Destroy()
+	pool.DestroyAll()
 
 	assert.True(t, isDestroyed)
 }
@@ -163,13 +198,101 @@ func TestDestroyWhileThereAreLendedResource(t *testing.T) {
 	counter := 0
 	pool := Create(PoolConfig{
 		max: 2,
-		create: func() any {
-			counter++
+		factory: PoolFactory{
+			create: func() any {
+				counter++
 
-			return counter
+				return counter
+			},
 		},
 	})
 
 	pool.Acquire()
-	pool.Destroy()
+	pool.DestroyAll()
+}
+
+func TestDestroyResource(t *testing.T) {
+	counter := 0
+	pool := Create(PoolConfig{
+		max: 2,
+		factory: PoolFactory{
+			create: func() any {
+				counter++
+
+				return counter
+			},
+		},
+	})
+
+	resource, _ := pool.Acquire()
+	pool.Destroy(resource)
+
+	assert.Equal(t, 0, pool.Size())
+	assert.Equal(t, ResourceState(RESOURCE_STATE_ALLOCATED), resource.state)
+}
+
+// Should skip the first creatd resource, because it's invalid
+func TestValidateResource(t *testing.T) {
+	counter := 0
+	pool := Create(PoolConfig{
+		max: 2,
+		factory: PoolFactory{
+			create: func() any {
+				counter++
+
+				return counter
+			},
+			validate: func(resource Resource) bool {
+				return resource.Get() != 1
+			},
+		},
+	})
+
+	resource, _ := pool.Acquire()
+
+	assert.Equal(t, 2, resource.Get())
+	assert.Equal(t, 1, pool.Size())
+}
+
+// Not thread safe. Use channels??
+func XTestConcureny(t *testing.T) {
+	counter := 0
+	pool := Create(PoolConfig{
+		max: 2,
+		factory: PoolFactory{
+			create: func() any {
+				counter++
+
+				return counter
+			},
+		},
+	})
+
+	for i := 0; i < 10; i++ {
+		i := i
+		go func() {
+			resource, err := pool.Acquire()
+			defer func() {
+				if r := recover(); r != nil {
+					t.Logf("[%d] %v", i, resource)
+					t.Logf("[%d] %v", i, err)
+					t.Logf("[%d] %v", i, r)
+				}
+			}()
+			time.Sleep(time.Millisecond)
+			if err == nil {
+				pool.Release(resource)
+				t.Logf("[%d] Resource available", i)
+			} else {
+				t.Logf("[%d] Resource not available", i)
+			}
+		}()
+	}
+
+	time.Sleep(time.Second * 2)
+
+	assert.Equal(t, 2, pool.Size())
+	assert.Equal(t, 2, pool.NumberOfIdleResources())
+	assert.Equal(t, 0, pool.NumberOfLendedResources())
+
 }
