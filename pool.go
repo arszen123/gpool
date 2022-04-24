@@ -2,6 +2,7 @@ package pool
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/arszen123/gpool/queue"
 	"github.com/google/uuid"
@@ -12,6 +13,7 @@ type Pool struct {
 	allResources    []Resource
 	lendedResources []Resource
 	config          PoolConfig
+	mux             sync.Mutex
 }
 type PoolFactory struct {
 	create   func() any
@@ -27,30 +29,26 @@ type PoolConfig struct {
 type Resource struct {
 	id       string
 	resource any
-	state    ResourceState
 }
-type ResourceState string
-
-const (
-	RESOURCE_STATE_IDLE      ResourceState = "IDLE"
-	RESOURCE_STATE_ALLOCATED               = "ALLOCATED"
-	RESOURCE_STATE_INVALID                 = "INVALID"
-)
 
 func Create(config PoolConfig) Pool {
-	assertFactoryMethodsAvailable(config)
+	assertPoolConfig(config)
 
 	return Pool{
 		resources: queue.Create(),
 		config:    config,
+		mux:       sync.Mutex{},
 	}
 }
 
 func (p *Pool) Acquire() (Resource, error) {
+	p.mux.Lock()
+
 	resource := p.resources.Dequeue()
 
 	if resource == nil {
 		if p.Size() >= p.config.max {
+			p.mux.Unlock()
 			return Resource{}, errors.New("Maximum acquired items reached")
 		}
 
@@ -58,12 +56,12 @@ func (p *Pool) Acquire() (Resource, error) {
 		resource = Resource{
 			id:       uuid.NewString(),
 			resource: item,
-			state:    RESOURCE_STATE_ALLOCATED,
 		}
 		p.allResources = append(p.allResources, resource.(Resource))
 	}
 
 	p.lendedResources = append(p.lendedResources, resource.(Resource))
+	p.mux.Unlock()
 
 	if p.config.factory.validate != nil && !p.config.factory.validate(resource.(Resource)) {
 		p.Destroy(resource.(Resource))
@@ -74,21 +72,26 @@ func (p *Pool) Acquire() (Resource, error) {
 }
 
 func (p *Pool) Release(resource Resource) {
-	idx, err := p.getLendedResourceIndex(resource)
+	p.mux.Lock()
+	defer p.mux.Unlock()
 
-	if err != nil {
+	idx := getResourceIndex(p.lendedResources, resource)
+
+	if idx < 0 {
 		panic("Can't release an unknown resource")
 	}
 
-	resource.state = RESOURCE_STATE_IDLE
 	p.lendedResources = append(p.lendedResources[:idx], p.lendedResources[idx+1:]...)
 	p.resources.Enqueue(resource)
 }
 
 func (p *Pool) Destroy(resource Resource) {
-	idx, err := p.getLendedResourceIndex(resource)
+	p.mux.Lock()
+	defer p.mux.Unlock()
 
-	if err != nil {
+	idx := getResourceIndex(p.lendedResources, resource)
+
+	if idx < 0 {
 		panic("Can't destroy an unknown resource")
 	}
 
@@ -97,23 +100,18 @@ func (p *Pool) Destroy(resource Resource) {
 }
 
 func (p *Pool) destroy(resource Resource) {
-	resource.state = RESOURCE_STATE_INVALID
-	p.removeResource(resource)
-	if p.config.factory.destroy != nil {
-		p.config.factory.destroy(resource)
-	}
-}
-
-func (p *Pool) removeResource(resource Resource) {
-	for idx, aResource := range p.allResources {
-		if aResource.id == resource.id {
-			p.allResources = append(p.allResources[:idx], p.allResources[idx+1:]...)
-			break
+	idx := getResourceIndex(p.allResources, resource)
+	if idx >= 0 {
+		p.allResources = append(p.allResources[:idx], p.allResources[idx+1:]...)
+		if p.config.factory.destroy != nil {
+			p.config.factory.destroy(resource)
 		}
 	}
 }
 
 func (p *Pool) DestroyAll() {
+	p.mux.Lock()
+	defer p.mux.Unlock()
 	if p.config.factory.destroy == nil {
 		panic("fatory.destroy is not provided")
 	}
@@ -142,21 +140,24 @@ func (p Pool) NumberOfIdleResources() int {
 	return p.resources.Size()
 }
 
-func (p Pool) getLendedResourceIndex(item Resource) (int, error) {
-	for idx, lendedItem := range p.lendedResources {
+func getResourceIndex(items []Resource, item Resource) int {
+	for idx, lendedItem := range items {
 		if lendedItem.id == item.id {
-			return idx, nil
+			return idx
 		}
 	}
 
-	return 0, errors.New("Resource not found")
+	return -1
 }
 
-func assertFactoryMethodsAvailable(config PoolConfig) {
+func assertPoolConfig(config PoolConfig) {
 	factory := config.factory
 
 	if factory.create == nil {
-		panic("factory.create is not provided")
+		panic("PoolConfig.factory.create is not provided")
+	}
+	if config.max <= 0 {
+		panic("PoolConfig.max must be 1 or greate")
 	}
 }
 

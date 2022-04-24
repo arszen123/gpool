@@ -9,6 +9,7 @@ import (
 
 func TestCreate(t *testing.T) {
 	Create(PoolConfig{
+		max: 10,
 		factory: PoolFactory{
 			create: func() any {
 				return 1
@@ -42,8 +43,12 @@ func TestSimpleAcquire(t *testing.T) {
 	assert.Nil(err)
 }
 
-func TestExceddMaximumResources(t *testing.T) {
-	pool := Create(PoolConfig{
+func TestMaximumResources(t *testing.T) {
+	defer func() {
+		assert.NotNil(t, recover())
+	}()
+
+	Create(PoolConfig{
 		max: 0,
 		factory: PoolFactory{
 			create: func() any {
@@ -51,10 +56,6 @@ func TestExceddMaximumResources(t *testing.T) {
 			},
 		},
 	})
-
-	_, err := pool.Acquire()
-
-	assert.NotNil(t, err)
 }
 
 func TestSimpleRelease(t *testing.T) {
@@ -228,7 +229,6 @@ func TestDestroyResource(t *testing.T) {
 	pool.Destroy(resource)
 
 	assert.Equal(t, 0, pool.Size())
-	assert.Equal(t, ResourceState(RESOURCE_STATE_ALLOCATED), resource.state)
 }
 
 // Should skip the first creatd resource, because it's invalid
@@ -254,8 +254,7 @@ func TestValidateResource(t *testing.T) {
 	assert.Equal(t, 1, pool.Size())
 }
 
-// Not thread safe. Use channels??
-func XTestConcureny(t *testing.T) {
+func TestConcureny(t *testing.T) {
 	counter := 0
 	pool := Create(PoolConfig{
 		max: 2,
@@ -269,22 +268,11 @@ func XTestConcureny(t *testing.T) {
 	})
 
 	for i := 0; i < 10; i++ {
-		i := i
 		go func() {
 			resource, err := pool.Acquire()
-			defer func() {
-				if r := recover(); r != nil {
-					t.Logf("[%d] %v", i, resource)
-					t.Logf("[%d] %v", i, err)
-					t.Logf("[%d] %v", i, r)
-				}
-			}()
 			time.Sleep(time.Millisecond)
 			if err == nil {
 				pool.Release(resource)
-				t.Logf("[%d] Resource available", i)
-			} else {
-				t.Logf("[%d] Resource not available", i)
 			}
 		}()
 	}
@@ -294,5 +282,4 @@ func XTestConcureny(t *testing.T) {
 	assert.Equal(t, 2, pool.Size())
 	assert.Equal(t, 2, pool.NumberOfIdleResources())
 	assert.Equal(t, 0, pool.NumberOfLendedResources())
-
 }
