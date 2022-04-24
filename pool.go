@@ -3,6 +3,7 @@ package pool
 import (
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/arszen123/gpool/queue"
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ type Pool struct {
 	lendedResources []Resource
 	config          PoolConfig
 	mux             sync.Mutex
+	waitingClients  []chan Resource
 }
 type PoolFactory struct {
 	create   func() any
@@ -22,8 +24,9 @@ type PoolFactory struct {
 }
 
 type PoolConfig struct {
-	max     int
-	factory PoolFactory
+	max                  int
+	acquireTimeoutMillis time.Duration
+	factory              PoolFactory
 }
 
 type Resource struct {
@@ -35,23 +38,59 @@ func Create(config PoolConfig) Pool {
 	assertPoolConfig(config)
 
 	return Pool{
-		resources: queue.Create(),
-		config:    config,
-		mux:       sync.Mutex{},
+		resources:      queue.Create(),
+		config:         config,
+		mux:            sync.Mutex{},
+		waitingClients: []chan Resource{},
 	}
 }
 
 func (p *Pool) Acquire() (Resource, error) {
-	p.mux.Lock()
+	ch := make(chan Resource)
 
+	p.mux.Lock()
+	p.waitingClients = append(p.waitingClients, ch)
+	p.mux.Unlock()
+
+	go p.dispatch()
+
+	if p.config.acquireTimeoutMillis <= 0 {
+		resource, ok := <-ch
+		if !ok {
+			return Resource{}, errors.New("No resource available")
+		}
+		return resource, nil
+	}
+
+	select {
+	case resource, ok := <-ch:
+		if !ok {
+			return Resource{}, errors.New("No resource available")
+		}
+		return resource, nil
+	case <-time.After(p.config.acquireTimeoutMillis):
+		go func() {
+			resource, ok := <-ch
+			if ok {
+				p.Release(resource)
+			}
+		}()
+		return Resource{}, errors.New("Acquire timeout")
+	}
+}
+
+func (p *Pool) dispatch() {
+	p.mux.Lock()
+	if len(p.waitingClients) <= 0 || (p.Size() >= p.config.max && p.resources.Size() <= 0) {
+		p.mux.Unlock()
+		return
+	}
+
+	ch := p.waitingClients[0]
+	p.waitingClients = p.waitingClients[1:]
 	resource := p.resources.Dequeue()
 
 	if resource == nil {
-		if p.Size() >= p.config.max {
-			p.mux.Unlock()
-			return Resource{}, errors.New("Maximum acquired items reached")
-		}
-
 		item := p.config.factory.create()
 		resource = Resource{
 			id:       uuid.NewString(),
@@ -64,15 +103,23 @@ func (p *Pool) Acquire() (Resource, error) {
 	p.mux.Unlock()
 
 	if p.config.factory.validate != nil && !p.config.factory.validate(resource.(Resource)) {
-		p.Destroy(resource.(Resource))
-		return p.Acquire()
-	}
+		var err error
 
-	return resource.(Resource), nil
+		p.Destroy(resource.(Resource))
+		resource, err = p.Acquire()
+		if err != nil {
+			close(ch)
+			return
+		}
+	}
+	ch <- resource.(Resource)
 }
 
 func (p *Pool) Release(resource Resource) {
 	p.mux.Lock()
+	defer func() {
+		go p.dispatch()
+	}()
 	defer p.mux.Unlock()
 
 	idx := getResourceIndex(p.lendedResources, resource)
@@ -87,6 +134,9 @@ func (p *Pool) Release(resource Resource) {
 
 func (p *Pool) Destroy(resource Resource) {
 	p.mux.Lock()
+	defer func() {
+		go p.dispatch()
+	}()
 	defer p.mux.Unlock()
 
 	idx := getResourceIndex(p.lendedResources, resource)
@@ -113,7 +163,7 @@ func (p *Pool) DestroyAll() {
 	p.mux.Lock()
 	defer p.mux.Unlock()
 	if p.config.factory.destroy == nil {
-		panic("fatory.destroy is not provided")
+		panic("PoolConfig.fatory.destroy is not provided")
 	}
 	if len(p.lendedResources) > 0 {
 		panic("Can't destroy pool when there are lended resources")

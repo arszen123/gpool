@@ -283,3 +283,80 @@ func TestConcureny(t *testing.T) {
 	assert.Equal(t, 2, pool.NumberOfIdleResources())
 	assert.Equal(t, 0, pool.NumberOfLendedResources())
 }
+
+func TestAcquireTimeout(t *testing.T) {
+	pool := Create(PoolConfig{
+		max:                  2,
+		acquireTimeoutMillis: time.Millisecond * 10,
+		factory: PoolFactory{
+			create: func() any {
+				return 1
+			},
+		},
+	})
+
+	pool.Acquire()
+	pool.Acquire()
+	_, err := pool.Acquire()
+
+	assert.EqualError(t, err, "Acquire timeout")
+}
+
+func TestAcquireTimeoutWithUnknownReleas(t *testing.T) {
+	pool := Create(PoolConfig{
+		max:                  2,
+		acquireTimeoutMillis: time.Second,
+		factory: PoolFactory{
+			create: func() any {
+				return 1
+			},
+		},
+	})
+
+	res, _ := pool.Acquire()
+	pool.Acquire()
+	go func(res Resource) {
+		defer func() {
+			recover()
+			pool.Release(res)
+		}()
+		pool.Release(Resource{})
+	}(res)
+	_, err := pool.Acquire()
+
+	assert.Nil(t, err)
+}
+
+func TestSizeWithAcquireTimeout(t *testing.T) {
+	pool := Create(PoolConfig{
+		max:                  2,
+		acquireTimeoutMillis: time.Millisecond * 1,
+		factory: PoolFactory{
+			create: func() any {
+				time.Sleep(time.Millisecond * 2)
+				return 1
+			},
+		},
+	})
+
+	ch := make(chan int)
+	for i := 0; i < 10; i++ {
+		go func() {
+			_, err := pool.Acquire()
+			if err == nil {
+				ch <- 1
+			} else {
+				ch <- 0
+			}
+		}()
+	}
+
+	sum := 0
+	for i := 0; i < 5; i++ {
+		v := <-ch
+		sum += v
+	}
+
+	assert.Equal(t, pool.Size()-sum, pool.NumberOfIdleResources())
+	assert.Equal(t, sum, pool.NumberOfLendedResources())
+}
