@@ -1,5 +1,5 @@
 // Simple resource pool.
-package pool
+package gpool
 
 import (
 	"errors"
