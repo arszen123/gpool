@@ -9,9 +9,9 @@ import (
 
 func TestCreate(t *testing.T) {
 	Create(PoolConfig{
-		max: 10,
-		factory: PoolFactory{
-			create: func() any {
+		Max: 10,
+		Factory: PoolFactory{
+			Create: func() any {
 				return 1
 			},
 		},
@@ -29,9 +29,9 @@ func TestSimpleAcquire(t *testing.T) {
 	assert := assert.New(t)
 
 	pool := Create(PoolConfig{
-		max: 1,
-		factory: PoolFactory{
-			create: func() any {
+		Max: 1,
+		Factory: PoolFactory{
+			Create: func() any {
 				return 1
 			},
 		},
@@ -49,9 +49,9 @@ func TestMaximumResources(t *testing.T) {
 	}()
 
 	Create(PoolConfig{
-		max: 0,
-		factory: PoolFactory{
-			create: func() any {
+		Max: 0,
+		Factory: PoolFactory{
+			Create: func() any {
 				return 1
 			},
 		},
@@ -64,9 +64,9 @@ func TestSimpleRelease(t *testing.T) {
 	}()
 
 	pool := Create(PoolConfig{
-		max: 1,
-		factory: PoolFactory{
-			create: func() any {
+		Max: 1,
+		Factory: PoolFactory{
+			Create: func() any {
 				return 1
 			},
 		},
@@ -82,9 +82,9 @@ func TestRelaseUnknownResource(t *testing.T) {
 	}()
 
 	pool := Create(PoolConfig{
-		max: 1,
-		factory: PoolFactory{
-			create: func() any {
+		Max: 1,
+		Factory: PoolFactory{
+			Create: func() any {
 				return 1
 			},
 		},
@@ -101,10 +101,10 @@ func TestMultipleResources(t *testing.T) {
 
 	counter := 0
 	pool := Create(PoolConfig{
-		max: 2,
+		Max: 2,
 
-		factory: PoolFactory{
-			create: func() any {
+		Factory: PoolFactory{
+			Create: func() any {
 				counter++
 
 				return counter
@@ -130,9 +130,9 @@ func TestPoolSize(t *testing.T) {
 
 	counter := 0
 	pool := Create(PoolConfig{
-		max: 2,
-		factory: PoolFactory{
-			create: func() any {
+		Max: 2,
+		Factory: PoolFactory{
+			Create: func() any {
 				counter++
 
 				return counter
@@ -171,14 +171,14 @@ func TestDestroy(t *testing.T) {
 	isDestroyed := false
 
 	pool := Create(PoolConfig{
-		max: 2,
-		factory: PoolFactory{
-			create: func() any {
+		Max: 2,
+		Factory: PoolFactory{
+			Create: func() any {
 				counter++
 
 				return counter
 			},
-			destroy: func(resource Resource) {
+			Destroy: func(resource Resource) {
 				isDestroyed = true
 			},
 		},
@@ -198,9 +198,9 @@ func TestDestroyWhileThereAreLendedResource(t *testing.T) {
 
 	counter := 0
 	pool := Create(PoolConfig{
-		max: 2,
-		factory: PoolFactory{
-			create: func() any {
+		Max: 2,
+		Factory: PoolFactory{
+			Create: func() any {
 				counter++
 
 				return counter
@@ -215,9 +215,9 @@ func TestDestroyWhileThereAreLendedResource(t *testing.T) {
 func TestDestroyResource(t *testing.T) {
 	counter := 0
 	pool := Create(PoolConfig{
-		max: 2,
-		factory: PoolFactory{
-			create: func() any {
+		Max: 2,
+		Factory: PoolFactory{
+			Create: func() any {
 				counter++
 
 				return counter
@@ -235,14 +235,14 @@ func TestDestroyResource(t *testing.T) {
 func TestValidateResource(t *testing.T) {
 	counter := 0
 	pool := Create(PoolConfig{
-		max: 2,
-		factory: PoolFactory{
-			create: func() any {
+		Max: 2,
+		Factory: PoolFactory{
+			Create: func() any {
 				counter++
 
 				return counter
 			},
-			validate: func(resource Resource) bool {
+			Validate: func(resource Resource) bool {
 				return resource.Get() != 1
 			},
 		},
@@ -257,9 +257,9 @@ func TestValidateResource(t *testing.T) {
 func TestConcureny(t *testing.T) {
 	counter := 0
 	pool := Create(PoolConfig{
-		max: 2,
-		factory: PoolFactory{
-			create: func() any {
+		Max: 2,
+		Factory: PoolFactory{
+			Create: func() any {
 				counter++
 
 				return counter
@@ -286,10 +286,10 @@ func TestConcureny(t *testing.T) {
 
 func TestAcquireTimeout(t *testing.T) {
 	pool := Create(PoolConfig{
-		max:                  2,
-		acquireTimeoutMillis: time.Millisecond * 10,
-		factory: PoolFactory{
-			create: func() any {
+		Max:                  2,
+		AcquireTimeoutMillis: time.Millisecond * 10,
+		Factory: PoolFactory{
+			Create: func() any {
 				return 1
 			},
 		},
@@ -304,10 +304,10 @@ func TestAcquireTimeout(t *testing.T) {
 
 func TestAcquireTimeoutWithUnknownReleas(t *testing.T) {
 	pool := Create(PoolConfig{
-		max:                  2,
-		acquireTimeoutMillis: time.Second,
-		factory: PoolFactory{
-			create: func() any {
+		Max:                  2,
+		AcquireTimeoutMillis: time.Second,
+		Factory: PoolFactory{
+			Create: func() any {
 				return 1
 			},
 		},
@@ -329,10 +329,10 @@ func TestAcquireTimeoutWithUnknownReleas(t *testing.T) {
 
 func TestSizeWithAcquireTimeout(t *testing.T) {
 	pool := Create(PoolConfig{
-		max:                  2,
-		acquireTimeoutMillis: time.Millisecond * 1,
-		factory: PoolFactory{
-			create: func() any {
+		Max:                  2,
+		AcquireTimeoutMillis: time.Millisecond * 1,
+		Factory: PoolFactory{
+			Create: func() any {
 				time.Sleep(time.Millisecond * 2)
 				return 1
 			},
