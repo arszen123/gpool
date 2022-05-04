@@ -19,15 +19,22 @@ func TestCreate(t *testing.T) {
 }
 
 func TestCreateWithoutFactoryCreateMethod(t *testing.T) {
-	defer func() {
-		assert.NotNil(t, recover())
-	}()
-	Create(PoolConfig{})
+	assert.PanicsWithValue(t, "PoolConfig.Factory.Create is not provided", func() { Create(PoolConfig{}) })
 }
 
-func TestSimpleAcquire(t *testing.T) {
-	assert := assert.New(t)
+func TestCreateWithoutMax(t *testing.T) {
+	assert.PanicsWithValue(t, "PoolConfig.Max must be 1 or greater", func() {
+		Create(PoolConfig{
+			Factory: PoolFactory{
+				Create: func() any {
+					return 1
+				},
+			},
+		})
+	})
+}
 
+func TestAcquire(t *testing.T) {
 	pool := Create(PoolConfig{
 		Max: 1,
 		Factory: PoolFactory{
@@ -39,30 +46,11 @@ func TestSimpleAcquire(t *testing.T) {
 
 	item, err := pool.Acquire()
 
-	assert.Equal(1, item.Get())
-	assert.Nil(err)
+	assert.Equal(t, 1, item.Get())
+	assert.Nil(t, err)
 }
 
-func TestMaximumResources(t *testing.T) {
-	defer func() {
-		assert.NotNil(t, recover())
-	}()
-
-	Create(PoolConfig{
-		Max: 0,
-		Factory: PoolFactory{
-			Create: func() any {
-				return 1
-			},
-		},
-	})
-}
-
-func TestSimpleRelease(t *testing.T) {
-	defer func() {
-		assert.Nil(t, recover())
-	}()
-
+func TestRelease(t *testing.T) {
 	pool := Create(PoolConfig{
 		Max: 1,
 		Factory: PoolFactory{
@@ -73,14 +61,10 @@ func TestSimpleRelease(t *testing.T) {
 	})
 
 	resource, _ := pool.Acquire()
-	pool.Release(resource)
+	assert.NotPanics(t, func() { pool.Release(resource) })
 }
 
 func TestRelaseUnknownResource(t *testing.T) {
-	defer func() {
-		assert.NotNil(t, recover())
-	}()
-
 	pool := Create(PoolConfig{
 		Max: 1,
 		Factory: PoolFactory{
@@ -91,18 +75,21 @@ func TestRelaseUnknownResource(t *testing.T) {
 	})
 
 	pool.Acquire()
-	pool.Release(Resource{
-		id: "10",
-	})
+	assert.EqualError(
+		t,
+		pool.Release(Resource{
+			id: "10",
+		}),
+		ErrorUnknownResource.Error(),
+	)
 }
 
-func TestMultipleResources(t *testing.T) {
+func TestAcquireMultipleResources(t *testing.T) {
 	assert := assert.New(t)
 
 	counter := 0
 	pool := Create(PoolConfig{
 		Max: 2,
-
 		Factory: PoolFactory{
 			Create: func() any {
 				counter++
@@ -166,7 +153,7 @@ func TestPoolSize(t *testing.T) {
 	assert.Equal(1, pool.NumberOfLendedResources())
 }
 
-func TestDestroy(t *testing.T) {
+func TestDestroyPool(t *testing.T) {
 	counter := 0
 	isDestroyed := false
 
@@ -186,17 +173,14 @@ func TestDestroy(t *testing.T) {
 
 	resource, _ := pool.Acquire()
 	pool.Release(resource)
-	pool.DestroyAll()
+	pool.DestroyPool()
 
 	assert.True(t, isDestroyed)
 }
 
-func TestDestroyWhileThereAreLendedResource(t *testing.T) {
-	defer func() {
-		assert.NotNil(t, recover())
-	}()
-
+func TestDestroyPoolWithUnreleasedResources(t *testing.T) {
 	counter := 0
+
 	pool := Create(PoolConfig{
 		Max: 2,
 		Factory: PoolFactory{
@@ -209,7 +193,42 @@ func TestDestroyWhileThereAreLendedResource(t *testing.T) {
 	})
 
 	pool.Acquire()
-	pool.DestroyAll()
+
+	assert.EqualError(t, pool.DestroyPool(), ErrorCantDestroyPoolWithLendedResources.Error())
+}
+
+func TestInteractionAfterPoolIsDestroyed(t *testing.T) {
+	counter := 0
+
+	pool := Create(PoolConfig{
+		Max: 2,
+		Factory: PoolFactory{
+			Create: func() any {
+				counter++
+
+				return counter
+			},
+		},
+	})
+
+	resource, _ := pool.Acquire()
+	pool.Release(resource)
+
+	pool.DestroyPool()
+
+	_, acquireError := pool.Acquire()
+	destroyError := pool.Destroy(Resource{})
+	releaseError := pool.Release(Resource{})
+	destroyPoolError := pool.DestroyPool()
+
+	assert.EqualError(t, acquireError, ErrorPoolInactive.Error())
+	assert.EqualError(t, destroyError, ErrorPoolInactive.Error())
+	assert.EqualError(t, releaseError, ErrorPoolInactive.Error())
+	assert.EqualError(t, destroyPoolError, ErrorPoolInactive.Error())
+	assert.Equal(t, 0, pool.Size())
+	assert.Equal(t, 0, pool.NumberOfLendedResources())
+	assert.Equal(t, 0, pool.NumberOfIdleResources())
+	assert.Equal(t, PoolStateInactive, pool.State())
 }
 
 func TestDestroyResource(t *testing.T) {
@@ -228,6 +247,70 @@ func TestDestroyResource(t *testing.T) {
 	resource, _ := pool.Acquire()
 	pool.Destroy(resource)
 
+	assert.Equal(t, 0, pool.Size())
+}
+
+func TestDestroyResourceWithDestroyFactoryMethod(t *testing.T) {
+	counter := 0
+	isDestroyed := false
+
+	pool := Create(PoolConfig{
+		Max: 2,
+		Factory: PoolFactory{
+			Create: func() any {
+				counter++
+
+				return counter
+			},
+			Destroy: func(resource Resource) {
+				isDestroyed = true
+			},
+		},
+	})
+
+	resource, _ := pool.Acquire()
+	pool.Destroy(resource)
+
+	assert.True(t, isDestroyed)
+}
+
+func TestDestroyAlreadyReleasedResource(t *testing.T) {
+	counter := 0
+	pool := Create(PoolConfig{
+		Max: 2,
+		Factory: PoolFactory{
+			Create: func() any {
+				counter++
+
+				return counter
+			},
+		},
+	})
+
+	resource, _ := pool.Acquire()
+	pool.Release(resource)
+
+	assert.EqualError(t, pool.Destroy(resource), ErrorUnknownResource.Error())
+	assert.Equal(t, 1, pool.Size())
+}
+
+func TestDestroyAlreadyDestroyedResource(t *testing.T) {
+	counter := 0
+	pool := Create(PoolConfig{
+		Max: 2,
+		Factory: PoolFactory{
+			Create: func() any {
+				counter++
+
+				return counter
+			},
+		},
+	})
+
+	resource, _ := pool.Acquire()
+	pool.Destroy(resource)
+
+	assert.EqualError(t, pool.Destroy(resource), ErrorUnknownResource.Error())
 	assert.Equal(t, 0, pool.Size())
 }
 
@@ -252,6 +335,31 @@ func TestValidateResource(t *testing.T) {
 
 	assert.Equal(t, 2, resource.Get())
 	assert.Equal(t, 1, pool.Size())
+}
+
+func TestValidateInfinitely(t *testing.T) {
+	counter := 0
+	pool := Create(PoolConfig{
+		Max:               2,
+		AcquireTimeout:    time.Millisecond,
+		MaxWaitingClients: 1,
+		Factory: PoolFactory{
+			Create: func() any {
+				counter++
+
+				return counter
+			},
+			Validate: func(resource Resource) bool {
+				return false
+			},
+		},
+	})
+
+	pool.Acquire()
+	pool.Acquire()
+	_, err := pool.Acquire()
+
+	assert.EqualError(t, err, ErrorMaximumWaitingClientsExceeded.Error())
 }
 
 func TestConcureny(t *testing.T) {
@@ -286,8 +394,8 @@ func TestConcureny(t *testing.T) {
 
 func TestAcquireTimeout(t *testing.T) {
 	pool := Create(PoolConfig{
-		Max:                  2,
-		AcquireTimeoutMillis: time.Millisecond * 10,
+		Max:            2,
+		AcquireTimeout: time.Millisecond * 10,
 		Factory: PoolFactory{
 			Create: func() any {
 				return 1
@@ -299,13 +407,13 @@ func TestAcquireTimeout(t *testing.T) {
 	pool.Acquire()
 	_, err := pool.Acquire()
 
-	assert.EqualError(t, err, "Acquire timeout")
+	assert.EqualError(t, err, ErrorAcquireTimeout.Error())
 }
 
-func TestAcquireTimeoutWithUnknownReleas(t *testing.T) {
+func TestConcurentAcquireTimeout(t *testing.T) {
 	pool := Create(PoolConfig{
-		Max:                  2,
-		AcquireTimeoutMillis: time.Second,
+		Max:            2,
+		AcquireTimeout: time.Second,
 		Factory: PoolFactory{
 			Create: func() any {
 				return 1
@@ -315,6 +423,7 @@ func TestAcquireTimeoutWithUnknownReleas(t *testing.T) {
 
 	res, _ := pool.Acquire()
 	pool.Acquire()
+
 	go func(res Resource) {
 		defer func() {
 			recover()
@@ -322,15 +431,16 @@ func TestAcquireTimeoutWithUnknownReleas(t *testing.T) {
 		}()
 		pool.Release(Resource{})
 	}(res)
+
 	_, err := pool.Acquire()
 
 	assert.Nil(t, err)
 }
 
-func TestSizeWithAcquireTimeout(t *testing.T) {
+func TestSizeWithConcurentAcquireTimeout(t *testing.T) {
 	pool := Create(PoolConfig{
-		Max:                  2,
-		AcquireTimeoutMillis: time.Millisecond * 1,
+		Max:            2,
+		AcquireTimeout: time.Millisecond * 1,
 		Factory: PoolFactory{
 			Create: func() any {
 				time.Sleep(time.Millisecond * 2)
@@ -342,21 +452,44 @@ func TestSizeWithAcquireTimeout(t *testing.T) {
 	ch := make(chan int)
 	for i := 0; i < 10; i++ {
 		go func() {
-			_, err := pool.Acquire()
-			if err == nil {
-				ch <- 1
-			} else {
-				ch <- 0
-			}
+			pool.Acquire()
+			ch <- 0
 		}()
 	}
 
-	sum := 0
-	for i := 0; i < 5; i++ {
-		v := <-ch
-		sum += v
+	for i := 0; i < 10; i++ {
+		<-ch
 	}
 
-	assert.Equal(t, pool.Size()-sum, pool.NumberOfIdleResources())
-	assert.Equal(t, sum, pool.NumberOfLendedResources())
+	assert.Equal(t, pool.Size(), 2)
+	assert.Equal(t, 0, pool.NumberOfIdleResources())
+	assert.Equal(t, 2, pool.NumberOfLendedResources())
+}
+
+func TestMaxWaitingClients(t *testing.T) {
+	pool := Create(PoolConfig{
+		Max:               2,
+		MaxWaitingClients: 1,
+		Factory: PoolFactory{
+			Create: func() any {
+				return 1
+			},
+		},
+	})
+
+	pool.Acquire()
+	pool.Acquire()
+
+	go func() {
+		pool.Acquire()
+	}()
+
+	time.Sleep(time.Millisecond)
+
+	_, err := pool.Acquire()
+
+	assert.EqualError(t, err, ErrorMaximumWaitingClientsExceeded.Error())
+	assert.Equal(t, pool.Size(), 2)
+	assert.Equal(t, 0, pool.NumberOfIdleResources())
+	assert.Equal(t, 2, pool.NumberOfLendedResources())
 }

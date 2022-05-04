@@ -11,9 +11,19 @@ import (
 )
 
 var (
-	ErrorMaximumWaitingClientsExceeded = errors.New("Maximum waiting clients exceeded")
-	ErrorNoResourceAvailable           = errors.New("No resource available")
-	ErrorAcquireTimeout                = errors.New("Acquire timeout")
+	ErrorMaximumWaitingClientsExceeded      = errors.New("Maximum waiting clients exceeded")
+	ErrorNoResourceAvailable                = errors.New("No resource available")
+	ErrorAcquireTimeout                     = errors.New("Acquire timeout")
+	ErrorUnknownResource                    = errors.New("Unknown resource")
+	ErrorCantDestroyPoolWithLendedResources = errors.New("Can't destroy pool when there are lended resources")
+	ErrorPoolInactive                       = errors.New("Can't perform actions on an inactive pool")
+)
+
+type PoolState = string
+
+const (
+	PoolStateActive   PoolState = "ACTIVE"
+	PoolStateInactive           = "INACTIVE"
 )
 
 type Pool struct {
@@ -23,6 +33,7 @@ type Pool struct {
 	config          PoolConfig
 	mux             sync.Mutex
 	waitingClients  []chan Resource
+	state           PoolState
 }
 
 type PoolFactory struct {
@@ -32,10 +43,10 @@ type PoolFactory struct {
 }
 
 type PoolConfig struct {
-	Max                  int
-	AcquireTimeoutMillis time.Duration
-	MaxWaitingClients    int
-	Factory              PoolFactory
+	Max               int
+	AcquireTimeout    time.Duration
+	MaxWaitingClients int
+	Factory           PoolFactory
 }
 
 // Resource holds the client resource.
@@ -53,57 +64,79 @@ func Create(config PoolConfig) Pool {
 		config:         config,
 		mux:            sync.Mutex{},
 		waitingClients: []chan Resource{},
+		state:          PoolStateActive,
 	}
 }
 
 // Acquire retrieves a Resource from the pool.
 func (p *Pool) Acquire() (Resource, error) {
-	ch := make(chan Resource)
-
 	p.mux.Lock()
+
+	if isPoolInactive(*p) {
+		defer p.mux.Unlock()
+		return Resource{}, ErrorPoolInactive
+	}
+
+	ch := make(chan Resource)
 	maxWaitingClients := p.config.MaxWaitingClients
-	if maxWaitingClients > 0 && len(p.waitingClients) > maxWaitingClients {
+
+	if maxWaitingClients > 0 && len(p.waitingClients) >= maxWaitingClients {
+		defer p.mux.Unlock()
 		return Resource{}, ErrorMaximumWaitingClientsExceeded
 	}
+
 	p.waitingClients = append(p.waitingClients, ch)
 	p.mux.Unlock()
 
 	go p.dispatch()
 
-	if p.config.AcquireTimeoutMillis <= 0 {
-		resource, ok := <-ch
+	return p.resolveResource(ch)
+}
+
+func (p *Pool) resolveResource(ch chan Resource) (Resource, error) {
+	createResponse := func(resource Resource, ok bool) (Resource, error) {
 		if !ok {
 			return Resource{}, ErrorNoResourceAvailable
 		}
 		return resource, nil
 	}
 
+	if p.config.AcquireTimeout <= 0 {
+		resource, ok := <-ch
+		return createResponse(resource, ok)
+	}
+
 	select {
 	case resource, ok := <-ch:
-		if !ok {
-			return Resource{}, ErrorNoResourceAvailable
-		}
-		return resource, nil
-	case <-time.After(p.config.AcquireTimeoutMillis):
+		return createResponse(resource, ok)
+	case <-time.After(p.config.AcquireTimeout):
 		go func() {
 			resource, ok := <-ch
 			if ok {
 				p.Release(resource)
 			}
 		}()
+
 		return Resource{}, ErrorAcquireTimeout
 	}
 }
 
 func (p *Pool) dispatch() {
 	p.mux.Lock()
-	if len(p.waitingClients) <= 0 || (p.Size() >= p.config.Max && p.resources.Size() <= 0) {
+
+	isPoolInactive := isPoolInactive(*p)
+
+	if isPoolInactive || len(p.waitingClients) <= 0 || (p.Size() >= p.config.Max && p.resources.Size() <= 0) {
+		if isPoolInactive && len(p.waitingClients) > 0 {
+			for _, ch := range p.waitingClients {
+				close(ch)
+			}
+			p.waitingClients = []chan Resource{}
+		}
 		p.mux.Unlock()
 		return
 	}
 
-	ch := p.waitingClients[0]
-	p.waitingClients = p.waitingClients[1:]
 	resource := p.resources.Dequeue()
 
 	if resource == nil {
@@ -119,52 +152,67 @@ func (p *Pool) dispatch() {
 	p.mux.Unlock()
 
 	if p.config.Factory.Validate != nil && !p.config.Factory.Validate(resource.(Resource)) {
-		var err error
-
 		p.Destroy(resource.(Resource))
-		resource, err = p.Acquire()
-		if err != nil {
-			close(ch)
-			return
-		}
+		go p.dispatch()
+		return
 	}
+
+	p.mux.Lock()
+
+	ch := p.waitingClients[0]
+	p.waitingClients = p.waitingClients[1:]
+
+	p.mux.Unlock()
+
 	ch <- resource.(Resource)
 }
 
 // Release releases a resources.
-func (p *Pool) Release(resource Resource) {
+func (p *Pool) Release(resource Resource) error {
 	p.mux.Lock()
 	defer func() {
 		go p.dispatch()
 	}()
 	defer p.mux.Unlock()
 
+	if isPoolInactive(*p) {
+		return ErrorPoolInactive
+	}
+
 	idx, err := getResourceIndex(p.lendedResources, resource)
 
 	if err != nil {
-		panic("Can't release an unknown resource")
+		return ErrorUnknownResource
 	}
 
 	p.lendedResources = append(p.lendedResources[:idx], p.lendedResources[idx+1:]...)
 	p.resources.Enqueue(resource)
+
+	return nil
 }
 
 // Destroy destroys a resource.
-func (p *Pool) Destroy(resource Resource) {
+func (p *Pool) Destroy(resource Resource) error {
 	p.mux.Lock()
 	defer func() {
 		go p.dispatch()
 	}()
 	defer p.mux.Unlock()
 
+	if isPoolInactive(*p) {
+		return ErrorPoolInactive
+	}
+
 	idx, err := getResourceIndex(p.lendedResources, resource)
 
 	if err != nil {
-		panic("Can't destroy an unknown resource")
+		return ErrorUnknownResource
 	}
 
 	p.lendedResources = append(p.lendedResources[:idx], p.lendedResources[idx+1:]...)
 	p.destroy(resource)
+
+	return nil
 }
 
 func (p *Pool) destroy(resource Resource) {
@@ -180,24 +228,35 @@ func (p *Pool) destroy(resource Resource) {
 	}
 }
 
-// DestroyAll desytroys all the resources in the pool.
-func (p *Pool) DestroyAll() {
+// DestroyPool desytroys all the resources in the pool.
+func (p *Pool) DestroyPool() error {
 	p.mux.Lock()
 	defer p.mux.Unlock()
-	if p.config.Factory.Destroy == nil {
-		panic("PoolConfig.fatory.destroy is not provided")
+
+	if isPoolInactive(*p) {
+		return ErrorPoolInactive
 	}
+
 	if len(p.lendedResources) > 0 {
-		panic("Can't destroy pool when there are lended resources")
+		return ErrorCantDestroyPoolWithLendedResources
 	}
+
+	for _, resource := range p.allResources {
+
+		if p.config.Factory.Destroy != nil {
+			p.config.Factory.Destroy(resource)
+		}
+	}
+	p.allResources = []Resource{}
 
 	resource := p.resources.Dequeue()
 	for resource != nil {
-
-		p.config.Factory.Destroy(resource.(Resource))
-
 		resource = p.resources.Dequeue()
 	}
+
+	p.state = PoolStateInactive
+
+	return nil
 }
 
 // Size returns the number of resources the pool manages.
@@ -215,6 +274,15 @@ func (p Pool) NumberOfIdleResources() int {
 	return p.resources.Size()
 }
 
+// State returns the pool state.
+func (p Pool) State() PoolState {
+	return p.state
+}
+
+func isPoolInactive(p Pool) bool {
+	return p.state == PoolStateInactive
+}
+
 func getResourceIndex(items []Resource, item Resource) (int, error) {
 	for idx, lendedItem := range items {
 		if lendedItem.id == item.id {
@@ -229,10 +297,10 @@ func assertPoolConfig(config PoolConfig) {
 	factory := config.Factory
 
 	if factory.Create == nil {
-		panic("PoolConfig.factory.create is not provided")
+		panic("PoolConfig.Factory.Create is not provided")
 	}
 	if config.Max <= 0 {
-		panic("PoolConfig.max must be 1 or greate")
+		panic("PoolConfig.Max must be 1 or greater")
 	}
 }
 

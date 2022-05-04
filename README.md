@@ -7,7 +7,7 @@
 ## Configuration
 
 - `Max` - Maximum number of resources the pool can have. (default=0)
-- `AcquireTimeoutMillis` - Maximum duration before timing out a resource acquire. Returns a `ErrorAcquireTimeout` error, if exceeded. (default=0, unlimited)
+- `AcquireTimeout` - Maximum duration before timing out a resource acquire. Returns a `ErrorAcquireTimeout` error, if exceeded. (default=0, unlimited)
 - `MaxWaitingClients` - Maximum number of queued requests allowed. Additional `Acquire` calls will retrun an `ErrorMaximumWaitingClientsExceeded` error. (default=0, unlimited)
 - `Factory`
   - `Create` - A function that the pool will call to create a new resource.
@@ -16,6 +16,5 @@
 
 ## TODO
 
-- Update tests
 - Cleanup codebase
 - Implement idle resources removal
