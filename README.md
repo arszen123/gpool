@@ -3,6 +3,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/arszen123/gpool)](https://goreportcard.com/report/github.com/arszen123/gpool)
 [![Go Reference](https://pkg.go.dev/badge/github.com/arszen123/gpool.svg)](https://pkg.go.dev/github.com/arszen123/gpool)
 [![Maintainability](https://api.codeclimate.com/v1/badges/19e47e51c6f3ccf2722c/maintainability)](https://codeclimate.com/github/arszen123/gpool/maintainability)
+[![Test Coverage](https://api.codeclimate.com/v1/badges/19e47e51c6f3ccf2722c/test_coverage)](https://codeclimate.com/github/arszen123/gpool/test_coverage)
 
 ## Configuration
 
