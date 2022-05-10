@@ -5,8 +5,8 @@ on:
       - main
     tags:
       - '!*' # Do not execute on tags
-    # paths:
-    #   - '*.go'
+    paths:
+      - '*.go'
   pull_request:
     paths:
       - '!*.MD'
@@ -19,7 +19,7 @@ jobs:
       with:
         go-version: 1.18
     - uses: actions/checkout@v3
-    - run: ./test_cover.sh
+    - run: go test ./...
 
   coverage:
     needs: [ test ]

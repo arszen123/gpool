@@ -1,6 +1,7 @@
 package gpool
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -44,7 +45,7 @@ func TestAcquire(t *testing.T) {
 		},
 	})
 
-	item, err := pool.Acquire()
+	item, err := pool.Acquire(nil)
 
 	assert.Equal(t, 1, item.Get())
 	assert.Nil(t, err)
@@ -60,7 +61,7 @@ func TestRelease(t *testing.T) {
 		},
 	})
 
-	resource, _ := pool.Acquire()
+	resource, _ := pool.Acquire(nil)
 	assert.NotPanics(t, func() { pool.Release(resource) })
 }
 
@@ -74,7 +75,7 @@ func TestRelaseUnknownResource(t *testing.T) {
 		},
 	})
 
-	pool.Acquire()
+	pool.Acquire(nil)
 	assert.EqualError(
 		t,
 		pool.Release(Resource{
@@ -99,12 +100,12 @@ func TestAcquireMultipleResources(t *testing.T) {
 		},
 	})
 
-	resource1, _ := pool.Acquire()
-	resource2, _ := pool.Acquire()
+	resource1, _ := pool.Acquire(nil)
+	resource2, _ := pool.Acquire(nil)
 
 	pool.Release(resource1)
 
-	resource3, _ := pool.Acquire()
+	resource3, _ := pool.Acquire(nil)
 
 	assert.Equal(1, resource1.Get())
 	assert.Equal(2, resource2.Get())
@@ -127,8 +128,8 @@ func TestPoolSize(t *testing.T) {
 		},
 	})
 
-	resource1, _ := pool.Acquire()
-	resource2, _ := pool.Acquire()
+	resource1, _ := pool.Acquire(nil)
+	resource2, _ := pool.Acquire(nil)
 
 	assert.Equal(2, pool.Size())
 	assert.Equal(0, pool.NumberOfIdleResources())
@@ -146,7 +147,7 @@ func TestPoolSize(t *testing.T) {
 	assert.Equal(2, pool.NumberOfIdleResources())
 	assert.Equal(0, pool.NumberOfLendedResources())
 
-	pool.Acquire()
+	pool.Acquire(nil)
 
 	assert.Equal(2, pool.Size())
 	assert.Equal(1, pool.NumberOfIdleResources())
@@ -171,7 +172,7 @@ func TestDestroyPool(t *testing.T) {
 		},
 	})
 
-	resource, _ := pool.Acquire()
+	resource, _ := pool.Acquire(nil)
 	pool.Release(resource)
 	pool.DestroyPool()
 
@@ -192,7 +193,7 @@ func TestDestroyPoolWithUnreleasedResources(t *testing.T) {
 		},
 	})
 
-	pool.Acquire()
+	pool.Acquire(nil)
 
 	assert.EqualError(t, pool.DestroyPool(), ErrorCantDestroyPoolWithLendedResources.Error())
 }
@@ -211,12 +212,12 @@ func TestInteractionAfterPoolIsDestroyed(t *testing.T) {
 		},
 	})
 
-	resource, _ := pool.Acquire()
+	resource, _ := pool.Acquire(nil)
 	pool.Release(resource)
 
 	pool.DestroyPool()
 
-	_, acquireError := pool.Acquire()
+	_, acquireError := pool.Acquire(nil)
 	destroyError := pool.Destroy(Resource{})
 	releaseError := pool.Release(Resource{})
 	destroyPoolError := pool.DestroyPool()
@@ -244,7 +245,7 @@ func TestDestroyResource(t *testing.T) {
 		},
 	})
 
-	resource, _ := pool.Acquire()
+	resource, _ := pool.Acquire(nil)
 	pool.Destroy(resource)
 
 	assert.Equal(t, 0, pool.Size())
@@ -268,7 +269,7 @@ func TestDestroyResourceWithDestroyFactoryMethod(t *testing.T) {
 		},
 	})
 
-	resource, _ := pool.Acquire()
+	resource, _ := pool.Acquire(nil)
 	pool.Destroy(resource)
 
 	assert.True(t, isDestroyed)
@@ -287,7 +288,7 @@ func TestDestroyAlreadyReleasedResource(t *testing.T) {
 		},
 	})
 
-	resource, _ := pool.Acquire()
+	resource, _ := pool.Acquire(nil)
 	pool.Release(resource)
 
 	assert.EqualError(t, pool.Destroy(resource), ErrorUnknownResource.Error())
@@ -307,7 +308,7 @@ func TestDestroyAlreadyDestroyedResource(t *testing.T) {
 		},
 	})
 
-	resource, _ := pool.Acquire()
+	resource, _ := pool.Acquire(nil)
 	pool.Destroy(resource)
 
 	assert.EqualError(t, pool.Destroy(resource), ErrorUnknownResource.Error())
@@ -331,7 +332,7 @@ func TestValidateResource(t *testing.T) {
 		},
 	})
 
-	resource, _ := pool.Acquire()
+	resource, _ := pool.Acquire(nil)
 
 	assert.Equal(t, 2, resource.Get())
 	assert.Equal(t, 1, pool.Size())
@@ -355,9 +356,9 @@ func TestValidateInfinitely(t *testing.T) {
 		},
 	})
 
-	pool.Acquire()
-	pool.Acquire()
-	_, err := pool.Acquire()
+	pool.Acquire(nil)
+	pool.Acquire(nil)
+	_, err := pool.Acquire(nil)
 
 	assert.EqualError(t, err, ErrorMaximumWaitingClientsExceeded.Error())
 }
@@ -377,7 +378,7 @@ func TestConcureny(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		go func() {
-			resource, err := pool.Acquire()
+			resource, err := pool.Acquire(nil)
 			time.Sleep(time.Millisecond)
 			if err == nil {
 				pool.Release(resource)
@@ -403,9 +404,9 @@ func TestAcquireTimeout(t *testing.T) {
 		},
 	})
 
-	pool.Acquire()
-	pool.Acquire()
-	_, err := pool.Acquire()
+	pool.Acquire(nil)
+	pool.Acquire(nil)
+	_, err := pool.Acquire(nil)
 
 	assert.EqualError(t, err, ErrorAcquireTimeout.Error())
 }
@@ -421,8 +422,8 @@ func TestConcurentAcquireTimeout(t *testing.T) {
 		},
 	})
 
-	res, _ := pool.Acquire()
-	pool.Acquire()
+	res, _ := pool.Acquire(nil)
+	pool.Acquire(nil)
 
 	go func(res Resource) {
 		defer func() {
@@ -432,7 +433,7 @@ func TestConcurentAcquireTimeout(t *testing.T) {
 		pool.Release(Resource{})
 	}(res)
 
-	_, err := pool.Acquire()
+	_, err := pool.Acquire(nil)
 
 	assert.Nil(t, err)
 }
@@ -452,7 +453,7 @@ func TestSizeWithConcurentAcquireTimeout(t *testing.T) {
 	ch := make(chan int)
 	for i := 0; i < 10; i++ {
 		go func() {
-			pool.Acquire()
+			pool.Acquire(nil)
 			ch <- 0
 		}()
 	}
@@ -477,19 +478,62 @@ func TestMaxWaitingClients(t *testing.T) {
 		},
 	})
 
-	pool.Acquire()
-	pool.Acquire()
+	pool.Acquire(nil)
+	pool.Acquire(nil)
 
 	go func() {
-		pool.Acquire()
+		pool.Acquire(nil)
 	}()
 
 	time.Sleep(time.Millisecond)
 
-	_, err := pool.Acquire()
+	_, err := pool.Acquire(nil)
 
 	assert.EqualError(t, err, ErrorMaximumWaitingClientsExceeded.Error())
 	assert.Equal(t, pool.Size(), 2)
 	assert.Equal(t, 0, pool.NumberOfIdleResources())
 	assert.Equal(t, 2, pool.NumberOfLendedResources())
+}
+
+func TestContextCancel(t *testing.T) {
+	counter := 0
+	pool := Create(PoolConfig{
+		Max: 2,
+		Factory: PoolFactory{
+			Create: func() any {
+				counter++
+
+				return counter
+			},
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := pool.Acquire(ctx)
+
+	assert.EqualError(t, err, ErrorAcquireTimeout.Error())
+}
+
+func TestContextCancelWithAcquireTimeout(t *testing.T) {
+	counter := 0
+	pool := Create(PoolConfig{
+		Max:            2,
+		AcquireTimeout: time.Minute,
+		Factory: PoolFactory{
+			Create: func() any {
+				counter++
+
+				return counter
+			},
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := pool.Acquire(ctx)
+
+	assert.EqualError(t, err, ErrorAcquireTimeout.Error())
 }

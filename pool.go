@@ -2,6 +2,7 @@
 package gpool
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -69,7 +70,11 @@ func Create(config PoolConfig) Pool {
 }
 
 // Acquire retrieves a Resource from the pool.
-func (p *Pool) Acquire() (Resource, error) {
+func (p *Pool) Acquire(ctx context.Context) (Resource, error) {
+	if ctx == nil {
+		ctx = context.TODO()
+	}
+
 	p.mux.Lock()
 
 	if isPoolInactive(*p) {
@@ -90,26 +95,21 @@ func (p *Pool) Acquire() (Resource, error) {
 
 	go p.dispatch()
 
-	return p.resolveResource(ch)
+	return p.resolveResource(ctx, ch)
 }
 
-func (p *Pool) resolveResource(ch chan Resource) (Resource, error) {
-	createResponse := func(resource Resource, ok bool) (Resource, error) {
-		if !ok {
-			return Resource{}, ErrorNoResourceAvailable
-		}
-		return resource, nil
-	}
+func (p *Pool) resolveResource(ctx context.Context, ch chan Resource) (Resource, error) {
+	if p.config.AcquireTimeout > 0 {
+		var cancel context.CancelFunc
 
-	if p.config.AcquireTimeout <= 0 {
-		resource, ok := <-ch
-		return createResponse(resource, ok)
+		ctx, cancel = context.WithTimeout(ctx, p.config.AcquireTimeout)
+
+		defer cancel()
 	}
 
 	select {
-	case resource, ok := <-ch:
-		return createResponse(resource, ok)
-	case <-time.After(p.config.AcquireTimeout):
+	case <-ctx.Done():
+		// cleanup
 		go func() {
 			resource, ok := <-ch
 			if ok {
@@ -118,6 +118,11 @@ func (p *Pool) resolveResource(ch chan Resource) (Resource, error) {
 		}()
 
 		return Resource{}, ErrorAcquireTimeout
+	case resource, ok := <-ch:
+		if !ok {
+			return Resource{}, ErrorNoResourceAvailable
+		}
+		return resource, nil
 	}
 }
 
