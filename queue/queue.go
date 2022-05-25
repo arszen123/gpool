@@ -32,3 +32,80 @@ func (q *Queue) Dequeue() any {
 func (q Queue) Size() int {
 	return len(q.items)
 }
+
+type QueueIterator struct {
+	queue     *Queue
+	cursor    int
+	isStarted bool
+}
+
+type NextValue struct {
+	Done  bool
+	Value any
+}
+
+// Iterator returns a new iterator that makes available to iterate over the items stored in the Queue.
+func (q *Queue) Iterator() QueueIterator {
+	return QueueIterator{
+		queue: q,
+	}
+}
+
+// Next returns the next item in the queue.
+func (i *QueueIterator) Next() NextValue {
+	i.advanceCursor()
+
+	if i.isCursorOutOfRange() {
+		return NextValue{
+			Done:  true,
+			Value: nil,
+		}
+	}
+
+	return NextValue{
+		Done:  false,
+		Value: i.queue.items[i.cursor],
+	}
+}
+
+// Remove removes the current item from the Queue.
+func (i *QueueIterator) Remove() {
+	if i.isCursorOutOfRange() {
+		return
+	}
+
+	min := i.cursor
+	max := i.cursor + 1
+
+	items := i.queue.items
+	items = append(items[:min], items[max:]...)
+
+	i.decreaseCursor()
+
+	i.queue.items = items
+}
+
+func (i QueueIterator) isCursorOutOfRange() bool {
+	return i.cursor >= len(i.queue.items)
+}
+
+func (i *QueueIterator) advanceCursor() {
+	if !i.isStarted {
+		i.isStarted = true
+		i.cursor = 0
+		return
+	}
+
+	i.cursor++
+}
+
+func (i *QueueIterator) decreaseCursor() {
+	i.cursor--
+
+	if i.cursor < 0 {
+		i.isStarted = false
+		i.cursor = 0
+		return
+	}
+
+}
